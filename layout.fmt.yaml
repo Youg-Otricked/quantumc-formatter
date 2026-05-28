@@ -1,0 +1,8 @@
+formatting:
+  indent_size: 4
+  use_tabs: false
+  max_width: 80
+naming:
+  functions: camelCase
+  variables: snake_case
+  types: PascalCase
