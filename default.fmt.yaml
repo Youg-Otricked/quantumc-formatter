@@ -2,12 +2,11 @@ formatting:
   indent_size: 4
   use_tabs: false
   braces:
+    enforce:
+      level: warning
+      autocorrect: false
     open_brace:
       before: " " 
-      after: "\n"
-    indent: true
-    close_brace:
-      before: "\n"
   operators:
     unops:
       before: ""
@@ -15,7 +14,6 @@ formatting:
     binops:
       before: " "
       after: " "
-  trailing_commas: no
   # params_per_line: null
   # max_width: null
 naming:
@@ -48,7 +46,7 @@ comments:
     functions: doc
     file: top_level_doc
     namespaces: doc
-    internal: /// No Include
+    internal: No Include
 newlines:
   style: lf
   final_newline: true
@@ -56,9 +54,6 @@ newlines:
 includes:
   filepath:
     quotes: false
-    relative: true
-    absolute: false
-    tilde_relative: true
 namespaces:
   types:
     amount: 1

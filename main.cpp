@@ -9,7 +9,8 @@
 #include <fstream>
 #include <unistd.h>
 #include <limits.h>
-#include <algorithem>
+#include <algorithm>
+#include "yaml.hpp"
 inline std::string whitespace = " \t\n\r";
 inline std::string DIGITS = "0123456789";
 inline std::string LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -264,8 +265,12 @@ class Lexer {
         tokens.reserve(256); 
         while (this->current_char != '\0') {
             if (isCharInSet(this->current_char, whitespace)) {
-				tokens.push_back(Token(TokenType::WHITESPACE, std::string(1, this->current_char)));
-                this->advance();
+				std::string ws = "";
+                while (isCharInSet(this->current_char, whitespace)) {
+                    ws += std::string(1, this->current_char);
+                    this->advance();
+                }
+                tokens.push_back(Token(TokenType::WHITESPACE, ws));
                 continue;
             } else if (isCharInSet(this->current_char, DIGITS)) {
                 tokens.push_back(this->make_number());
@@ -551,13 +556,12 @@ void notImplemented(int count, char** args) {
 void help(int count, char** args) {
 	std::cout << "QuantumC Formatter version " << VERSION << R"(
 qconform help - This command.
-qconform list - Lists current default formatting conventions.
-qconform conv <filename | default> - Changes formatting conventions to either default, or to the conventions stored in >filename>
-qconform check [config file path | default] <filename> - Checks formatting against formatting conventions. Current saved default unless specified file path / default
-qconform apply <filename> - Same as above but also applys.
+qconform list <config file alias | default> - Lists formatting conventions for that alias.
+qconform check [config file alias | default] <filename> - Checks formatting against formatting conventions. Current saved default unless specified file path / default
+qconform apply [config file alias | default] <filename> - Same as above but also applys.
 qconform setup - Creates all the folders and files for the cli to work, and adds it to your PATH.
 qconform create - Adds formatting rules, creates the rules file, and adds it, with an alias.
-qconform alias [-d/--delete | -l/--list] - Creates a quick alias for a rule file and stores it in the saved directorys in the .qconform folder. -d/--delete is the vis-versa, and -l/--list lists all aliases
+qconform alias { <name> <path> | -l|--list | -d|--delete <name> } - Creates a quick alias for a rule file and stores it in the saved directorys in the .qconform folder. -d/--delete is the vis-versa, and -l/--list lists all aliases
 )";
 }
 void setup(int count, char** args) {
@@ -572,7 +576,7 @@ void setup(int count, char** args) {
 		std::cout << "Config file already exists." << '\n';
 	} else {
 		auto file = std::ofstream(home + "/.qconform/config.yaml");
-		file << "aliases:\n  - default:\n    " << home << "/.qconform/default.fmt.yaml";
+		file << "aliases:\n  default: " << home << "/.qconform/default.fmt.yaml";
 		file.close();
 	}
 	if (std::filesystem::exists(home + "/.qconform/default.fmt.yaml")) {
@@ -667,32 +671,415 @@ namespaces:
     std::filesystem::copy_file(std::string(result, cnt), home + "/.qconform/bin/qconform", std::filesystem::copy_options::overwrite_existing);
     std::cout << "Run: source " << rcFile << "\n";
 }
+std::string strip(const std::string& s) {
+    auto start = s.find_first_not_of(" \t\n\r");
+    if (start == std::string::npos) return "";
+    auto end = s.find_last_not_of(" \t\n\r");
+    return s.substr(start, end - start + 1);
+}
 void create(int count, char** args) {
+	char* chome = std::getenv("HOME");
+	if (chome == nullptr) {
+		throw "HOME not set";
+	}
+	std::string home(chome);
+	if (!std::filesystem::exists(home + "/.qconform/formats")) {
+		throw "Please run qconform setup";
+	}
+    if (!std::filesystem::exists(home + "/.qconform/config.yaml")) {
+		throw "Please run qconform setup";
+	}
 	std::cout << "\033[?1049h\033[2J\033[H";
 	std::cout << "This Wizard will create you your .fmt.yaml." << '\n';
 	std::cout << "\n\n";
     std::cout << "rules name: (" << std::filesystem::current_path().filename() << ") ";
-    std::string rulesName = "";
-    std::getline(std::cin, rulesName);
-    if (rulesName.empty() || std::all_of(rulesName.begin(), scopeName.end(), isspace)) {
-        rulesName = std::filesystem::current_path().filename();
+    std::string rules_name = "";
+    std::getline(std::cin, rules_name);
+    if (rules_name.empty() || std::all_of(rules_name.begin(), rules_name.end(), isspace)) {
+        rules_name = std::filesystem::current_path().filename();
     }
 	std::cout << '\n';
-	std::cout << "enter spacing amount or tab for tabs: (4) ";
+	std::cout << "\n\nFormatting rules:\n\n";
+	std::cout << "  Enter spacing amount or tab for tabs: (4) ";
 	std::string tabs;
+	std::getline(std::cin, tabs);
+	int tabc = 4;
+	std::string use_tabs = "false";
 	try {
-		std::getline(std::cin, tabs);
+		if (strip(tabs) != "tab") {
+			std::stoi(tabs);
+		} else {
+			tabs = "4";
+			use_tabs = "true";
+		}
 	} catch (...) {
-		throw "Invalid tab amount.";
+		tabs = "4";
 	}
+	std::cout << '\n';
+	std::cout << "  Enter max number of parameters per line (or null for none): (null) ";
+	std::string param_max;
+	std::getline(std::cin, param_max);
+	try {
+		std::stoi(param_max);
+	} catch (...) {
+		param_max = "null";
+	}
+	std::cout << '\n';
+	std::cout << "  Enter max number of chars per line (or null for none): (null) ";
+	std::string char_max;
+	std::getline(std::cin, char_max);
+	try {
+		std::stoi(char_max);
+	} catch (...) {
+		char_max = "null";
+	}
+	std::cout << '\n' << '\n' << '\n';
+	std::cout << "  Brace rules:\n\n";
+	std::cout << "    What whitespace character should be before open braces (' ' or default): (\\n) ";
+	std::string before_braces;
+	std::getline(std::cin, before_braces);
+	if (before_braces != " ") {
+		before_braces = "\\n";
+	}
+	std::cout << "\n";
+	std::cout << "    What level should brace rules be enforced (warning or error or not): (warning) ";
+	std::string brace_enforcement;
+	std::getline(std::cin, brace_enforcement);
+	if (brace_enforcement != "error" && brace_enforcement != "warning" && brace_enforcement != "not") {
+		brace_enforcement = "warning";
+	}
+	std::cout << "\n";
+	std::cout << "    Should the apply command automatically fix brace spacing? (Y/n) ";
+	std::string autocomplete_brace_fixes;
+	std::getline(std::cin, autocomplete_brace_fixes);
+	if (autocomplete_brace_fixes == "Y" || autocomplete_brace_fixes == "y") {
+		autocomplete_brace_fixes = "true";
+	} else {
+		autocomplete_brace_fixes = "false";
+	}
+	std::cout << '\n' << '\n' << '\n';
+	std::cout << "  Operator rules:\n\n";
+	std::cout << "    Should unops have a space before them: (Y/n)";
+	std::string unop_space_before;
+	std::getline(std::cin, unop_space_before);
+	if (unop_space_before == "Y" || unop_space_before == "y") {
+		unop_space_before = " ";
+	} else {
+		unop_space_before = "";
+	} 
+	std::cout << "    Should unops have a space after them: (Y/n)";
+	std::string unop_space_after;
+	std::getline(std::cin, unop_space_after);
+	if (unop_space_after == "Y" || unop_space_after == "y") {
+		unop_space_after = " ";
+	} else {
+		unop_space_after = "";
+	} 
+	std::cout << "    Should binops have a space before them: (Y/n)";
+	std::string binop_space_before;
+	std::getline(std::cin, binop_space_before);
+	if (binop_space_before == "Y" || binop_space_before == "y") {
+		binop_space_before = " ";
+	} else {
+		binop_space_before = "";
+	} 
+	std::cout << "    Should binops have a space after them: (Y/n)";
+	std::string binop_space_after;
+	std::getline(std::cin, binop_space_after);
+	if (binop_space_after == "Y" || binop_space_after == "y") {
+		binop_space_after = " ";
+	} else {
+		binop_space_after = "";
+	} 
+	std::cout << '\n';
+	std::cout << "\n\nNaming rules:\n\n";
+		std::vector<std::string> casing_styles = {
+		"snake_case", "camelCase", "PascalCase", 
+		"SCREAMING_SNAKE_CASE", "camel_Snake_Case", "Pascal_Snake_Case"
+	};
+	struct Specifier {
+		std::string name;
+		std::string position;
+		std::string value;
+		std::string style;
+	};
+	std::vector<Specifier> specifiers;
+	std::cout << "  Naming Specifiers (e.g., private_member prefix __):\n";
+	while (true) {
+		std::cout << "    Enter specifier name (or 'done'): ";
+		std::string specName;
+		std::getline(std::cin, specName);
+		if (specName == "done" || specName.empty()) break;
+		Specifier s;
+		s.name = specName;
+		std::cout << "      Position (prefix/suffix): ";
+		std::getline(std::cin, s.position);
+		std::cout << "      Value (e.g., __): ";
+		std::getline(std::cin, s.value);
+		std::cout << "      Internal Style (snake_case, etc): ";
+		std::getline(std::cin, s.style);
+		specifiers.push_back(s);
+	}
+	std::vector<std::string> rule_types = {
+		"vars", "functions", "user_types", "constants", 
+		"private_members", "private_methods", "namespaces"
+	};
+	struct RuleMapping {
+		std::string rule_name;
+		std::string target;
+	};
+	std::vector<RuleMapping> rule_mappings;
+
+	std::cout << "\n  Mapping Rules:\n";
+	for (const auto& rule : rule_types) {
+		std::cout << "    Style for " << rule << ": (";
+		for (std::string style : casing_styles) {
+			if (style != "snake_case") {
+				std::cout << " | ";
+			}
+			std::cout << style;
+		}
+		std::cout << ") ";
+		std::string choice;
+		std::getline(std::cin, choice);
+		if (std::find(casing_styles.begin(), casing_styles.end(), strip(choice)) == casing_styles.end()) {
+			bool is_speci = false;
+			for (Specifier sp : specifiers) {
+				if (strip(sp.name) == strip(choice)) {
+					is_speci = true;
+				}
+			}
+			if (!is_speci) {
+				throw "Invalid casing style or specifier";
+			}
+		}
+		rule_mappings.push_back({rule, strip(choice)});
+	}
+	std::cout << "\n  Naming Enforcement Level (warning/error/not): (warning) ";
+	std::string name_enforce_level;
+	std::getline(std::cin, name_enforce_level);
+	if (name_enforce_level != "error" && name_enforce_level != "warning" && name_enforce_level != "not") {
+		name_enforce_level = "warning";
+	}
+	std::cout << "  Autocorrect naming? (Y/n): ";
+	std::string name_auto;
+	std::getline(std::cin, name_auto);
+	std::string name_autocorrect = (name_auto == "Y" || name_auto == "y") ? "true" : "false";
+	std::cout << "\n\nComment Rules:\n\n";
+	std::cout << "  Enter character sequence for normal comments: (//) ";
+	std::string comment_normal;
+	std::getline(std::cin, comment_normal);
+	if (comment_normal.empty()) comment_normal = "//";
+	std::cout << "  Enter character sequence for doc comments: (///) ";
+	std::string comment_doc;
+	std::getline(std::cin, comment_doc);
+	if (comment_doc.empty()) comment_doc = "///";
+	std::cout << "  Enter character sequence for top-level doc comments: (//!) ";
+	std::string top_doc;
+	std::getline(std::cin, top_doc);
+	if (top_doc.empty()) top_doc = "///";
+	std::cout << "  What level should comment rules be enforced (error/warning/not): (warning) ";
+	std::string comment_level;
+	std::getline(std::cin, comment_level);
+	if (comment_level.empty()) {
+		comment_level = "warning";
+	}
+	std::cout << "  What comment style should doc functions (doc, top_level_doc, or normal): (doc) ";
+	std::string function_comment;
+	std::getline(std::cin, function_comment);
+	if (function_comment.empty()) function_comment = "doc";
+	std::cout << "  What comment style should doc the top of files (doc, top_level_doc, or normal): (top_level_doc) ";
+	std::string file_comment;
+	std::getline(std::cin, file_comment);
+	if (file_comment.empty()) file_comment = "top_level_doc";
+	std::cout << "  What comment style should doc namespaces: (doc) ";
+	std::string namespace_comment;
+	std::getline(std::cin, namespace_comment);
+	if (namespace_comment.empty()) namespace_comment = "doc";
+	std::cout << "  What string or special sequence that starts a namespace comment should be used to mark a namespace as 'internal' (no include): (No Include) ";
+	std::string internal_comment;
+	std::getline(std::cin, internal_comment);
+	if (internal_comment.empty()) internal_comment = "No Include";
+	std::cout << "\n\nFile & Include Rules:\n\n";
+	std::cout << "  Line ending style (lf/crlf): (lf) ";
+	std::string nl_style;
+	std::getline(std::cin, nl_style);
+    if (nl_style.empty()) nl_style = "lf";
+	std::cout << "  Force final newline at end of file? (Y/n) ";
+	std::string final_nl_input;
+	std::getline(std::cin, final_nl_input);
+	std::string final_nl = (final_nl_input == "n" || final_nl_input == "N") ? "false" : "true";
+	std::cout << "  Collapse blank lines in apply mode? (Y/n) ";
+	std::string collapse_blanks_input;
+	std::getline(std::cin, collapse_blanks_input);
+	std::string collapse_blanks = (collapse_blanks_input == "n" || collapse_blanks_input == "N") ? "false" : "true";
+	std::cout << "  Use quotes for includes? (y/N) ";
+	std::string inc_quotes_input;
+	std::getline(std::cin, inc_quotes_input);
+	std::string inc_quotes = (inc_quotes_input == "y" || inc_quotes_input == "Y") ? "true" : "false";
+	std::cout << "\n\nNamespace Rules:\n\n";
+	std::cout << "  How many types per namespace: (1) ";
+	std::string ns_amount;
+	std::getline(std::cin, ns_amount);
+	if (ns_amount.empty()) ns_amount = "1";
 	std::cout << "\033[?1049l";
+	std::ofstream rule_file(std::string(std::filesystem::current_path().c_str()) + "/" + rules_name + ".fmt.yaml");
+	rule_file << "formatting:\n";
+	rule_file << "  indent_size: " << tabc << "\n";
+	rule_file << "  use_tabs: " << use_tabs << '\n';
+	rule_file << "  params_per_line: " << param_max << '\n';
+	rule_file << "  max_width: " << char_max << '\n';
+	rule_file << "  braces:\n";
+	rule_file << "    enforce:\n";
+	rule_file << "      level: " << brace_enforcement << '\n';
+	rule_file << "      autocomplete: " << autocomplete_brace_fixes << '\n';
+	rule_file << "    open_brace:\n";
+	rule_file << "      before: \"" << before_braces << '"' << '\n';
+	rule_file << "  operators:\n    unops:\n";
+	rule_file << "      before: \"" << unop_space_before << '"' << '\n';
+	rule_file << "      after: \"" << unop_space_after << '"' << '\n';
+	rule_file << "    binops:\n";
+	rule_file << "      before: \"" << binop_space_before << '"' << '\n';
+	rule_file << "      after: \"" << binop_space_after << '"' << '\n';
+	rule_file << "naming:\n  specifiers:\n" << '\n';
+	for (Specifier spec : specifiers) {
+		rule_file << "    " << spec.name << ": \n";
+		rule_file << "      position: " << spec.position << '\n';
+		rule_file << "      value: " << spec.value << '\n';
+		rule_file << "      style: " << spec.style << '\n';
+	}
+	rule_file << "  rules:\n    enforce:\n";
+	rule_file << "      level: " << name_enforce_level << '\n';
+	rule_file << "      autocorrect: " << name_autocorrect << '\n';
+	for (RuleMapping rule : rule_mappings) {
+		rule_file << "    " << rule.rule_name << ": " << rule.target << '\n';
+	}
+	rule_file << "comments:\n";
+	rule_file << "  specifiers:\n";
+	rule_file << "    normal: " << comment_normal << "\n";
+	rule_file << "    doc: " << comment_doc << "\n";
+	rule_file << "    top_level_doc: " << top_doc << "\n";
+	rule_file << "  rules:\n";
+	rule_file << "    enforce:\n";
+	rule_file << "      level: " << comment_level << "\n";
+	rule_file << "    functions: " << function_comment << "\n";
+	rule_file << "    file: " << file_comment << "\n";
+	rule_file << "    namespaces: " << namespace_comment << "\n";
+	rule_file << "    internal: \"" << internal_comment << "\"\n";
+
+	rule_file << "newlines:\n";
+	rule_file << "  style: " << nl_style << "\n";
+	rule_file << "  final_newline: " << final_nl << "\n";
+	rule_file << "  collapse_blanks: " << collapse_blanks << "\n";
+
+	rule_file << "includes:\n";
+	rule_file << "  filepath:\n";
+	rule_file << "    quotes: " << inc_quotes << "\n";
+	rule_file << "namespaces:\n";
+	rule_file << "  types:\n";
+	rule_file << "    amount: " << ns_amount << "\n";
+	rule_file << "    enforce: warning\n";
+	rule_file.close();
+	std::filesystem::rename(std::string(std::filesystem::current_path().c_str()) + "/" + rules_name + ".fmt.yaml", home + "/.qconform/formats/" + rules_name + ".fmt.yaml");
+	auto yaml = fkyaml::node::deserialize(fopen((home + std::string("/.qconform/config.yaml")).c_str(), "r"));
+    yaml["aliases"][rules_name] = home + "/.qconform/formats/" + rules_name + ".fmt.yaml";
+    auto config = std::ofstream(home + "/.qconform/config.yaml");
+    config << yaml;
+    config.close();
 	std::cout << "Rule .fmt.yaml file created successfuly!" << '\n';
+}
+void alias(int count, char** args) {
+    if (count < 3) {
+        throw "Too few args";
+    }
+    char* chome = std::getenv("HOME");
+	if (chome == nullptr) {
+		throw "HOME not set";
+	}
+	std::string home(chome);
+    if (!std::filesystem::exists(home + "/.qconform/config.yaml")) {
+        throw "Please run `qconform setup`";
+    }
+    auto config_node = fkyaml::node::deserialize(fopen((home + "/.qconform/config.yaml").c_str(), "r"));
+    if (std::string(args[2]) == "-d" || std::string(args[2]) == "--delete") {
+        if (count < 4) {
+            throw "Too few args";
+        }
+        std::string target = args[3];
+        if (config_node["aliases"].contains(target)) {
+            if (target == "default") {
+                std::cout << "Cannot delete the default alias." << std::endl;
+            } else {
+                std::filesystem::remove(config_node["aliases"][target].get_value<std::string>());
+                config_node["aliases"].as_map().erase(target);
+                auto config = std::ofstream(home + "/.qconform/config.yaml");
+                config << fkyaml::node::serialize(config_node);
+                config.close();
+                std::cout << "Alias '" << target << "' removed." << std::endl;
+            }
+        } else {
+            throw "Alias " + target + " doesn't exist.";
+        }
+    } else if (std::string(args[2]) == "-l" || std::string(args[2]) == "--list") {
+        auto aliases = config_node["aliases"];
+        std::cout << "Current Formatting Aliases:\n";
+        std::cout << "---------------------------\n";
+        for (auto it = aliases.begin(); it != aliases.end(); ++it) {
+            std::cout << "  " << it.key().get_value<std::string>() << " -> " << it.value().get_value<std::string>() << "\n";
+        }
+    } else {
+        if (count < 4) {
+            throw "Too few args";
+        }
+        std::string alias_name = args[2];
+        std::filesystem::path alias_path(args[3]);
+        if (!alias_path.empty() && alias_path.string()[0] == '~') {
+            alias_path = std::filesystem::path(home) / alias_path.string().substr(2);
+        }
+        std::cout << "Importing " << alias_path.filename() << " into ~/.qconform/formats/..." << '\n';
+        std::filesystem::rename(alias_path, home + "/.qconform/formats/" + std::string(alias_path.filename().c_str()));
+        config_node["aliases"][alias_name] = home + "/.qconform/formats/" + std::string(alias_path.filename().c_str());
+        std::ofstream config_out(home + "/.qconform/config.yaml");
+        config_out << fkyaml::node::serialize(config_node);
+        config_out.close();
+    }
+}
+void list_conventions(int count, char** args) {
+    char* chome = std::getenv("HOME");
+	if (chome == nullptr) {
+		throw "HOME not set";
+	}
+    if (count < 3) {
+        throw "Too few args";
+    }
+	std::string home(chome);
+    if (!std::filesystem::exists(home + "/.qconform/config.yaml")) {
+        throw "Please run `qconform setup`";
+    }
+    auto config = fkyaml::node::deserialize(fopen((home + "/.qconform/config.yaml").c_str(), "r"));
+    std::string active_path = config["aliases"][args[2]].get_value<std::string>();
+    auto rules = fkyaml::node::deserialize(fopen(active_path.c_str(), "r"));
+    std::cout << "Active Conventions (" << active_path << "):\n";
+    std::cout << "------------------------------------------\n";
+    std::cout << "Formatting:\n";
+    std::cout << "  Indentation: " << rules["formatting"]["indent_size"] 
+              << (rules["formatting"]["use_tabs"].get_value<bool>() ? " (tabs)" : " (spaces)") << "\n";
+    std::cout << "\nNaming Rules:\n";
+    auto naming = rules["naming"]["rules"];
+    for (auto it = naming.begin(); it != naming.end(); ++it) {
+        if (it.key().get_value<std::string>() != "enforce") {
+             std::cout << "  " << it.key().get_value<std::string>() 
+                       << ": " << it.value().get_value<std::string>() << "\n";
+        }
+    }
+    std::cout << "--- Formatting Rules (as raw yaml) ---" << '\n';
+    std::cout << fkyaml::node::serialize(rules) << '\n';
 }
 struct Command {
 	std::string name;
 	std::function<void(int count, char** args)> command;
 };
-std::vector<Command> commands = {{"setup", setup}, {"help", help}}; 
+std::vector<Command> commands = {{"setup", setup}, {"help", help}, {"create", create}, {"alias", alias}, {"list", list_conventions}}; 
 int main(int argc, char** argv) {
 	if (argc < 2) {
 		std::cout << "Too few args. Try qconform help" << '\n';
@@ -709,9 +1096,14 @@ int main(int argc, char** argv) {
 				std::cout << "Error: " << e << '\n';
 			} catch (char* e) {
 				std::cout << "Error: " << e << '\n';
-			} catch (...) {
+			} catch (std::runtime_error e) {
+				std::cout << "Error: " << e.what() << '\n';
+			} catch (const std::exception& e) {
+                std::cerr << "Error: " << e.what() << '\n';
+            } catch (...) {
 				std::cout << "Unknown error." << '\n';
 			}
+			return 1;
 		}
 	}
 	std::cout << "Unknown command" << '\n';
